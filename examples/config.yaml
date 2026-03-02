@@ -1,6 +1,6 @@
 data:
-  train_files: hiyouga/math12k@train
-  val_files: hiyouga/math12k@test
+  train_files: hiyouga/geometry3k@train
+  val_files: hiyouga/geometry3k@test
   prompt_key: problem
   answer_key: answer
   image_key: images
@@ -8,8 +8,8 @@ data:
   image_dir: null
   video_fps: 2.0
   max_prompt_length: 2048
-  max_response_length: 4096
-  rollout_batch_size: 512  # equivalent to verl's data.train_batch_size
+  max_response_length: 2048
+  rollout_batch_size: 64  # equivalent to verl's data.train_batch_size
   mini_rollout_batch_size: null  # equivalent to verl's data.gen_batch_size
   val_batch_size: 1024
   format_prompt: ./examples/format_prompt/math.jinja
@@ -33,7 +33,7 @@ algorithm:
 
 worker:
   actor:
-    global_batch_size: 128  # equivalent to verl's actor.ppo_mini_batch_size
+    global_batch_size: 16  # equivalent to verl's actor.ppo_mini_batch_size
     micro_batch_size_per_device_for_update: 1  # equivalent to verl's actor.ppo_micro_batch_size_per_gpu
     micro_batch_size_per_device_for_experience: 2  # equivalent to verl's rollout.log_prob_micro_batch_size_per_gpu
     max_grad_norm: 1.0
@@ -41,7 +41,7 @@ worker:
     dynamic_batching: true
     ulysses_size: 1
     model:
-      model_path: Qwen/Qwen2.5-7B-Instruct
+      model_path: Qwen/Qwen3-VL-4B-Instruct
       enable_gradient_checkpointing: true
       trust_remote_code: false
       freeze_vision_tower: false
@@ -60,15 +60,15 @@ worker:
       enable_cpu_offload: false
       enable_rank0_init: true
     offload:
-      offload_params: true  # true: more CPU memory; false: more GPU memory
-      offload_optimizer: true  # true: more CPU memory; false: more GPU memory
+      offload_params: false  # true: more CPU memory; false: more GPU memory
+      offload_optimizer: false # true: more CPU memory; false: more GPU memory
 
   rollout:
     n: 5
     temperature: 1.0
     top_p: 1.0
     limit_images: 0
-    gpu_memory_utilization: 0.6
+    gpu_memory_utilization: 0.75
     enforce_eager: false
     enable_chunked_prefill: false
     tensor_parallel_size: 2
@@ -81,7 +81,7 @@ worker:
   ref:
     fsdp:
       enable_full_shard: true
-      enable_cpu_offload: true  # true: more CPU memory; false: more GPU memory
+      enable_cpu_offload: false  # true: more CPU memory; false: more GPU memory
       enable_rank0_init: true
     offload:
       offload_params: false
@@ -90,19 +90,19 @@ worker:
     reward_function: ./examples/reward_function/math.py:compute_score
 
 trainer:
-  total_epochs: 15
+  total_epochs: 10
   max_steps: null
   project_name: easy_r1
-  experiment_name: qwen2_5_7b_math_grpo
+  experiment_name: qwen3-4b-geo3k-grpo
   logger: ["file", "wandb"]
   nnodes: 1
-  n_gpus_per_node: 8
+  n_gpus_per_node: 2
   max_try_make_batch: 20  # -1 means no limit
-  val_freq: 5  # -1 to disable
+  val_freq: 20  # -1 to disable
   val_before_train: true
   val_only: false
   val_generations_to_log: 3
-  save_freq: 5  # -1 to disable
+  save_freq: 20  # -1 to disable
   save_limit: 3  # -1 to disable
   save_model_only: false
   save_checkpoint_path: null
