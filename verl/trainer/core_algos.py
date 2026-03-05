@@ -84,6 +84,7 @@ class AdvantageEstimator(str, Enum):
     REINFORCE_PLUS_PLUS = "reinforce_plus_plus"
     REMAX = "remax"
     RLOO = "rloo"
+    ADA_GRPO = "ada_grpo"
 
 
 ADV_ESTIMATOR_MAP: dict[str, Any] = {}
@@ -368,6 +369,98 @@ def compute_remax_outcome_advantage(
     advantages = (token_level_rewards.sum(dim=-1) - reward_baselines) * response_mask
     returns = (token_level_rewards * response_mask).flip(dims=(-1,)).cumsum(dim=-1).flip(dims=(-1,))
     return advantages, returns
+
+
+def gauss_diff(nums1: list, nums2: list) -> float:
+    """P(group1 > group2) via Gaussian CDF approximation.
+
+    Returns a value in [0, 1]: probability that a random draw from group1
+    exceeds a random draw from group2.
+    """
+    import statistics
+    from scipy.stats import norm
+
+    if len(nums1) < 2 or len(nums2) < 2:
+        # fallback: compare means only
+        return float(statistics.mean(nums1) > statistics.mean(nums2))
+    mean_diff = statistics.mean(nums1) - statistics.mean(nums2)
+    var_diff = statistics.variance(nums1) + statistics.variance(nums2)
+    return 1.0 - norm.cdf(-mean_diff / (var_diff ** 0.5 + 1e-5))
+
+
+@register_adv_estimator(AdvantageEstimator.ADA_GRPO)
+def compute_ada_grpo_outcome_advantage(
+    token_level_rewards: torch.Tensor,
+    response_mask: torch.Tensor,
+    index: np.ndarray,
+    group_index: np.ndarray,
+    eps: float = 1e-6,
+    **kwargs,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Compute advantage for adaGRPO (Phase 1: uniform group advantage, no prefix mask).
+
+    Splits n rollouts per question into 2 groups, uses a Gaussian CDF test to determine
+    which group won, and applies group-level advantage signals.
+
+    Args:
+        token_level_rewards: `(torch.Tensor)`
+            shape: (bs, response_length)
+        response_mask: `(torch.Tensor)`
+            shape: (bs, response_length)
+        index: `(np.ndarray)`
+            shape: (bs,) — uid identifying which question each sample belongs to
+        group_index: `(np.ndarray)`
+            shape: (bs,) — 0 or 1, which group within the question
+        eps: `(float)`
+            epsilon value to avoid division by zero
+
+    Returns:
+        advantages: `(torch.Tensor)`
+            shape: (bs, response_length)
+        returns: `(torch.Tensor)`
+            shape: (bs, response_length)
+
+    """
+    scores = token_level_rewards.sum(dim=-1)
+    bsz = scores.shape[0]
+
+    # Build uid -> {group_id: [scores]} mapping
+    uid2group_scores: dict = defaultdict(lambda: defaultdict(list))
+    for i in range(bsz):
+        uid = index[i]
+        gid = int(group_index[i])
+        uid2group_scores[uid][gid].append(scores[i].item())
+
+    # Validate: every uid must have exactly 2 groups
+    for uid, groups in uid2group_scores.items():
+        assert set(groups.keys()) == {0, 1}, (
+            f"adaGRPO requires exactly 2 groups per question, but uid '{uid}' has groups: {set(groups.keys())}"
+        )
+
+    # Compute win_prob per uid: P(group_0 > group_1)
+    uid2win_prob: dict = {}
+    uid2group_mean: dict = {}
+    uid2group_std: dict = {}
+    for uid, groups in uid2group_scores.items():
+        uid2win_prob[uid] = gauss_diff(groups[0], groups[1])
+        for gid in (0, 1):
+            t = torch.tensor(groups[gid])
+            uid2group_mean[(uid, gid)] = t.mean().item()
+            uid2group_std[(uid, gid)] = t.std().item() if len(t) > 1 else 0.0
+
+    # Compute per-sample advantages
+    advantages = torch.zeros(bsz, dtype=scores.dtype)
+    for i in range(bsz):
+        uid = index[i]
+        gid = int(group_index[i])
+        win_prob = uid2win_prob[uid]
+        group_adv = win_prob if gid == 0 else (1.0 - win_prob)
+        # Phase 1: apply group_adv uniformly (no prefix mask blend)
+        advantages[i] = group_adv
+
+    returns = advantages.unsqueeze(-1) * response_mask
+    return returns, returns
 
 
 def compute_rewards(

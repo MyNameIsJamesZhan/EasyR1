@@ -21,7 +21,9 @@ data:
   filter_overlong_prompts: true
 
 algorithm:
-  adv_estimator: grpo
+  adv_estimator: grpo  # options: grpo, ada_grpo, rloo, reinforce_plus_plus, remax, gae
+  # ada_grpo settings (only used when adv_estimator: ada_grpo)
+  ada_grpo_group_num: 2
   disable_kl: false
   use_kl_loss: true
   kl_penalty: low_var_kl
@@ -68,7 +70,7 @@ worker:
     temperature: 1.0
     top_p: 1.0
     limit_images: 0
-    gpu_memory_utilization: 0.75
+    gpu_memory_utilization: 0.5
     enforce_eager: false
     enable_chunked_prefill: false
     tensor_parallel_size: 2
@@ -90,7 +92,7 @@ worker:
     reward_function: ./examples/reward_function/math.py:compute_score
 
 trainer:
-  total_epochs: 10
+  total_epochs: 8
   max_steps: null
   project_name: easy_r1
   experiment_name: qwen3-4b-geo3k-grpo
@@ -98,11 +100,11 @@ trainer:
   nnodes: 1
   n_gpus_per_node: 2
   max_try_make_batch: 20  # -1 means no limit
-  val_freq: 20  # -1 to disable
+  val_freq: 75  # -1 to disable
   val_before_train: true
   val_only: false
   val_generations_to_log: 3
-  save_freq: 20  # -1 to disable
+  save_freq: 25  # -1 to disable
   save_limit: 3  # -1 to disable
   save_model_only: false
   save_checkpoint_path: null

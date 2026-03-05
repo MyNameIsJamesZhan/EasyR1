@@ -149,6 +149,9 @@ def compute_advantage(data: DataProto, adv_estimator: AdvantageEstimator, gamma:
     if "reward_baselines" in data.batch:
         adv_inputs["reward_baselines"] = data.batch["reward_baselines"]
 
+    if "group_index" in data.non_tensor_batch:
+        adv_inputs["group_index"] = data.non_tensor_batch["group_index"]
+
     advantages, returns = compute_advantage_return(adv_estimator, **adv_inputs)
     data.batch["advantages"] = advantages
     data.batch["returns"] = returns
@@ -234,6 +237,18 @@ class RayPPOTrainer:
             and config.worker.rollout.n == 1
         ):
             raise ValueError("GRPO and RLOO algorithm need `config.worker.rollout.n > 1`.")
+
+        if config.algorithm.adv_estimator == AdvantageEstimator.ADA_GRPO:
+            if config.worker.rollout.n % config.algorithm.ada_grpo_group_num != 0:
+                raise ValueError(
+                    f"rollout.n ({config.worker.rollout.n}) must be divisible by "
+                    f"ada_grpo_group_num ({config.algorithm.ada_grpo_group_num})."
+                )
+            if config.worker.rollout.n < config.algorithm.ada_grpo_group_num * 2:
+                raise ValueError(
+                    f"rollout.n ({config.worker.rollout.n}) must be >= "
+                    f"2 * ada_grpo_group_num ({config.algorithm.ada_grpo_group_num * 2}) for variance estimation."
+                )
 
         if config.trainer.max_steps is not None:
             self.training_steps = config.trainer.max_steps
@@ -513,6 +528,18 @@ class RayPPOTrainer:
             # repeat to align with repeated responses in rollout
             new_batch = new_batch.repeat(repeat_times=self.config.worker.rollout.n, interleave=True)
             new_batch = new_batch.union(gen_batch_output)
+
+            # assign group_index for adaGRPO
+            if self.config.algorithm.adv_estimator == AdvantageEstimator.ADA_GRPO:
+                n = self.config.worker.rollout.n
+                group_num = self.config.algorithm.ada_grpo_group_num
+                per_group = n // group_num
+                n_questions = len(new_batch) // n
+                group_idx = np.tile(
+                    [g for g in range(group_num) for _ in range(per_group)],
+                    n_questions,
+                )
+                new_batch.non_tensor_batch["group_index"] = group_idx
 
             # filter group
             if self.config.algorithm.online_filtering:

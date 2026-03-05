@@ -84,6 +84,8 @@ class AlgorithmConfig:
     """kl horizon for adaptive kl controller"""
     kl_target: float = 0.1
     """target kl for adaptive kl controller"""
+    ada_grpo_group_num: int = 2
+    """number of groups for adaGRPO; must evenly divide rollout.n"""
     online_filtering: bool = False
     """use online filtering"""
     filter_key: str = "overall"
